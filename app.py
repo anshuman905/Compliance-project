@@ -1,20 +1,19 @@
 import streamlit as st
 import pandas as pd
 import re
-import spacy
 
-# ---------------------------
-# PAGE SETUP
-# ---------------------------
 st.set_page_config(page_title="Compliance System", layout="wide")
-st.title("📊 NLP-Based Compliance Monitoring System")
+st.title("📊 Smart Compliance Monitoring System")
 
 # ---------------------------
-# LOAD SPACY MODEL
+# SAFE NLP LOADER ✅
 # ---------------------------
-@st.cache_resource
 def load_nlp():
-    return spacy.load("en_core_web_sm")
+    try:
+        import spacy
+        return spacy.load("en_core_web_sm")
+    except:
+        return None
 
 nlp = load_nlp()
 
@@ -29,50 +28,67 @@ def match_column(text, columns):
     return None
 
 # ---------------------------
-# RULE GENERATOR (spaCy NLP)
+# RULE GENERATOR (AUTO MODE)
 # ---------------------------
 def generate_rules(policy_text, columns):
     rules = []
-    doc = nlp(policy_text)
 
-    for sent in doc.sents:
-        sentence = sent.text.lower()
+    if nlp:  # ✅ Try spaCy
+        doc = nlp(policy_text)
 
-        for col in columns:
-            if col.lower() not in sentence:
-                continue
+        for sent in doc.sents:
+            sentence = sent.text.lower()
 
-            numbers = re.findall(r'\d+', sentence)
+            for col in columns:
+                if col.lower() not in sentence:
+                    continue
 
-            if not numbers:
-                continue
+                nums = re.findall(r'\d+', sentence)
+                if not nums:
+                    continue
 
-            # RANGE
-            if "between" in sentence and len(numbers) >= 2:
-                rules.append({
-                    "field": col,
-                    "operator": "range",
-                    "value": (int(numbers[0]), int(numbers[1]))
-                })
-                continue
+                if "between" in sentence and len(nums) >= 2:
+                    rules.append({"field": col, "operator": "range", "value": (int(nums[0]), int(nums[1]))})
+                    continue
 
-            value = int(numbers[0])
+                value = int(nums[0])
 
-            # MIN
-            if any(w in sentence for w in ["above", "greater", "minimum", "at least", "not less"]):
-                rules.append({"field": col, "operator": "min", "value": value})
+                if any(w in sentence for w in ["above", "greater", "minimum", "at least"]):
+                    rules.append({"field": col, "operator": "min", "value": value})
 
-            # MAX
-            elif any(w in sentence for w in ["below", "less", "maximum", "at most", "not more"]):
-                rules.append({"field": col, "operator": "max", "value": value})
+                elif any(w in sentence for w in ["below", "less", "maximum", "at most"]):
+                    rules.append({"field": col, "operator": "max", "value": value})
 
-            # EQUAL
-            elif any(w in sentence for w in ["equal", "equals", "is"]):
-                rules.append({"field": col, "operator": "equal", "value": value})
+                elif any(w in sentence for w in ["equal", "equals", "is"]):
+                    rules.append({"field": col, "operator": "equal", "value": value})
 
-            # NOT NULL
-            elif any(w in sentence for w in ["mandatory", "required", "not empty"]):
-                rules.append({"field": col, "operator": "not_null", "value": None})
+                elif any(w in sentence for w in ["mandatory", "required", "not empty"]):
+                    rules.append({"field": col, "operator": "not_null", "value": None})
+
+    else:  # ✅ FALLBACK IF SPACY FAILS (IMPORTANT)
+        text = policy_text.lower()
+        sentences = re.split(r"[.\n]", text)
+
+        for sentence in sentences:
+            for col in columns:
+                if col.lower() in sentence:
+
+                    m = re.search(r'(above|at least|min|minimum)\s+(\d+)', sentence)
+                    if m:
+                        rules.append({"field": col, "operator": "min", "value": int(m.group(2))})
+                        continue
+
+                    m = re.search(r'(below|at most|max|maximum)\s+(\d+)', sentence)
+                    if m:
+                        rules.append({"field": col, "operator": "max", "value": int(m.group(2))})
+                        continue
+
+                    m = re.search(r'between\s+(\d+)\s+and\s+(\d+)', sentence)
+                    if m:
+                        rules.append({"field": col, "operator": "range", "value": (int(m.group(1)), int(m.group(2)))})
+
+                    if "mandatory" in sentence or "required" in sentence:
+                        rules.append({"field": col, "operator": "not_null", "value": None})
 
     return rules
 
@@ -113,7 +129,7 @@ def evaluate_rules(row, rules):
     return "✅ Compliant" if not issues else "❌ " + ", ".join(issues)
 
 # ---------------------------
-# FILE READER
+# READ FILE
 # ---------------------------
 def read_policy(file):
     try:
@@ -133,10 +149,8 @@ def read_policy(file):
             from PyPDF2 import PdfReader
             reader = PdfReader(file)
             return " ".join([p.extract_text() or "" for p in reader.pages])
-
     except:
         return ""
-
     return ""
 
 # ---------------------------
@@ -144,18 +158,13 @@ def read_policy(file):
 # ---------------------------
 st.sidebar.header("Inputs")
 
-data_file = st.sidebar.file_uploader("Upload Dataset", type=["csv", "xlsx"])
-policy_file = st.sidebar.file_uploader("Upload Policy Document", type=["txt", "csv", "docx", "pdf"])
+data_file = st.sidebar.file_uploader("Upload Data", ["csv", "xlsx"])
+policy_file = st.sidebar.file_uploader("Upload Rules", ["txt", "csv", "docx", "pdf"])
 policy_text = st.sidebar.text_area("Or paste policy")
 
 rules = []
 
-# ---------------------------
-# MAIN
-# ---------------------------
 if data_file:
-
-    # Load dataset
     try:
         if data_file.name.endswith(".csv"):
             data = pd.read_csv(data_file)
@@ -165,11 +174,9 @@ if data_file:
         st.error("Error reading dataset")
         st.stop()
 
-    # Load policy
     if policy_file:
         policy_text = read_policy(policy_file)
 
-    # Generate rules
     if policy_text:
         rules = generate_rules(policy_text, data.columns)
 
@@ -180,12 +187,10 @@ if data_file:
         st.dataframe(data)
 
     with col2:
-        st.subheader("Extracted Rules")
+        st.subheader("Generated Rules")
         st.write(rules if rules else "No rules generated")
 
-    # Run compliance
     if st.button("Run Compliance Check"):
-
         if not rules:
             st.error("No rules generated")
         else:
