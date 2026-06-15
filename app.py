@@ -21,7 +21,7 @@ def match_column(field, columns):
     return None
 
 # ---------------------------
-# FINAL RULE GENERATOR
+# RULE GENERATOR
 # ---------------------------
 def generate_rules_from_text(policy_text, columns):
     rules = []
@@ -42,6 +42,7 @@ def generate_rules_from_text(policy_text, columns):
 
         for m in matches:
 
+            # ✅ cross-field rules FIXED
             if rtype in ["greater_field", "less_field"]:
                 f1 = match_column(m[0], columns)
                 f2 = match_column(m[1], columns)
@@ -77,7 +78,7 @@ def generate_rules_from_text(policy_text, columns):
     return rules
 
 # ---------------------------
-# RULE ENGINE
+# RULE ENGINE ✅ FIXED
 # ---------------------------
 def evaluate_rules(row, rules):
     issues = []
@@ -90,58 +91,62 @@ def evaluate_rules(row, rules):
         if f not in row:
             continue
 
-        if op == "min" and row[f] < v:
-            issues.append(f"{f} < {v}")
+        if op == "min":
+            if row[f] < v:
+                issues.append(f"{f} < {v}")
 
-        elif op == "max" and row[f] > v:
-            issues.append(f"{f} > {v}")
+        elif op == "max":
+            if row[f] > v:
+                issues.append(f"{f} > {v}")
 
         elif op == "range":
             if not (v[0] <= row[f] <= v[1]):
                 issues.append(f"{f} not in {v}")
 
-        elif op == "equal" and row[f] != v:
-            issues.append(f"{f} != {v}")
+        elif op == "equal":
+            if row[f] != v:
+                issues.append(f"{f} != {v}")
 
-        elif op == "not_null" and pd.isna(row[f]):
-            issues.append(f"{f} is null")
+        elif op == "not_null":
+            if pd.isna(row[f]):
+                issues.append(f"{f} is null")
 
         elif op == "greater_field":
-            if row[f] <= row[v]:
+            if f in row and v in row and row[f] <= row[v]:
                 issues.append(f"{f} <= {v}")
 
         elif op == "less_field":
-            if row[f] >= row[v]:
+            if f in row and v in row and row[f] >= row[v]:
                 issues.append(f"{f} >= {v}")
 
-    return "✅" if not issues else "❌ " + ", ".join(issues)
+    return "✅ Compliant" if not issues else "❌ " + ", ".join(issues)
 
 # ---------------------------
-# FILE READERS (PDF ADDED ✅)
+# FILE READERS ✅ SAFE
 # ---------------------------
 def read_rules_file(file, columns):
+    try:
+        if file.name.endswith(".txt"):
+            return generate_rules_from_text(file.read().decode("utf-8"), columns)
 
-    if file.name.endswith(".txt"):
-        return generate_rules_from_text(file.read().decode("utf-8"), columns)
+        elif file.name.endswith(".csv"):
+            df = pd.read_csv(file)
+            return df.to_dict(orient="records")
 
-    elif file.name.endswith(".csv"):
-        df = pd.read_csv(file)
-        return df.to_dict(orient="records")
+        elif file.name.endswith(".docx"):
+            from docx import Document
+            doc = Document(file)
+            text = " ".join([p.text for p in doc.paragraphs])
+            return generate_rules_from_text(text, columns)
 
-    elif file.name.endswith(".docx"):
-        from docx import Document
-        doc = Document(file)
-        text = " ".join([p.text for p in doc.paragraphs])
-        return generate_rules_from_text(text, columns)
-
-    elif file.name.endswith(".pdf"):
-        try:
+        elif file.name.endswith(".pdf"):
             from PyPDF2 import PdfReader
             reader = PdfReader(file)
-            text = " ".join([page.extract_text() for page in reader.pages if page.extract_text()])
+            text = " ".join([p.extract_text() or "" for p in reader.pages])
             return generate_rules_from_text(text, columns)
-        except:
-            return []
+
+    except:
+        return []
 
     return []
 
@@ -163,11 +168,17 @@ rules = []
 # ---------------------------
 if data_file:
 
-    if data_file.name.endswith(".csv"):
-        data = pd.read_csv(data_file)
-    else:
-        data = pd.read_excel(data_file, engine="openpyxl")
+    # ✅ SAFE DATA READ
+    try:
+        if data_file.name.endswith(".csv"):
+            data = pd.read_csv(data_file)
+        else:
+            data = pd.read_excel(data_file, engine="openpyxl")
+    except:
+        st.error("Error reading file. Check format.")
+        st.stop()
 
+    # RULE LOAD
     if rules_file:
         rules = read_rules_file(rules_file, data.columns)
 
