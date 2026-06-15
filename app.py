@@ -1,84 +1,86 @@
 import streamlit as st
 import pandas as pd
 import re
+import requests
 
 # ---------------------------
-# PAGE SETUP
+# CONFIG
 # ---------------------------
 st.set_page_config(page_title="Compliance System", layout="wide")
-st.title("📊 Compliance Monitoring System")
+st.title("📊 AI Compliance Monitoring System")
+
+HF_TOKEN = st.secrets["HF_TOKEN"]
+API_URL = "https://api-inference.huggingface.co/models/google/flan-t5-large"
+
+headers = {"Authorization": f"Bearer {HF_TOKEN}"}
 
 # ---------------------------
-# SMART COLUMN MATCHING
+# CALL HUGGING FACE
 # ---------------------------
-def match_column(field, columns):
-    field = field.lower()
-    for col in columns:
-        if field == col.lower():
-            return col
-        if field in col.lower():
-            return col
-    return None
+def query_hf(prompt):
+    payload = {"inputs": prompt}
+    response = requests.post(API_URL, headers=headers, json=payload)
+
+    if response.status_code != 200:
+        return ""
+
+    try:
+        return response.json()[0]["generated_text"]
+    except:
+        return ""
 
 # ---------------------------
-# RULE GENERATOR
+# LLM RULE GENERATOR ✅
 # ---------------------------
-def generate_rules_from_text(policy_text, columns):
+def generate_rules_llm(policy_text, columns):
+
+    prompt = f"""
+    Convert the following policy into structured rules.
+
+    Output format:
+    field, operator, value
+
+    Operators allowed: min, max, range, equal, not_null
+
+    Policy:
+    {policy_text}
+
+    Columns available:
+    {list(columns)}
+
+    Return only rules.
+    """
+
+    result = query_hf(prompt)
+
     rules = []
-    text = policy_text.lower()
 
-    patterns = [
-        (r'(\w+)\s+(above|greater than|at least|min|minimum)\s+(\d+)', "min"),
-        (r'(\w+)\s+(below|less than|at most|max|maximum)\s+(\d+)', "max"),
-        (r'(\w+)\s+between\s+(\d+)\s+and\s+(\d+)', "range"),
-        (r'(\w+)\s+(equals|equal to)\s+(\d+)', "equal"),
-        (r'(\w+)\s+(must not be empty|required|mandatory)', "not_null"),
-        (r'(\w+)\s*>\s*(\w+)', "greater_field"),
-        (r'(\w+)\s*<\s*(\w+)', "less_field"),
-    ]
+    for line in result.split("\n"):
+        parts = line.split(",")
+        if len(parts) >= 3:
+            try:
+                field = parts[0].strip()
+                operator = parts[1].strip()
+                value = parts[2].strip()
 
-    for pattern, rtype in patterns:
-        matches = re.findall(pattern, text)
+                if operator == "range":
+                    v1, v2 = map(int, value.split("-"))
+                    value = (v1, v2)
+                elif operator != "not_null":
+                    value = int(value)
 
-        for m in matches:
-
-            # ✅ cross-field rules FIXED
-            if rtype in ["greater_field", "less_field"]:
-                f1 = match_column(m[0], columns)
-                f2 = match_column(m[1], columns)
-                if f1 and f2:
-                    rules.append({"field": f1, "operator": rtype, "value": f2})
+                rules.append({
+                    "field": field,
+                    "operator": operator,
+                    "value": value
+                })
+            except:
                 continue
-
-            col = match_column(m[0], columns)
-            if not col:
-                continue
-
-            if rtype == "range":
-                rules.append({
-                    "field": col,
-                    "operator": "range",
-                    "value": (int(m[1]), int(m[2]))
-                })
-
-            elif rtype == "not_null":
-                rules.append({
-                    "field": col,
-                    "operator": "not_null",
-                    "value": None
-                })
-
-            else:
-                rules.append({
-                    "field": col,
-                    "operator": rtype,
-                    "value": int(m[-1])
-                })
 
     return rules
 
 # ---------------------------
-# RULE ENGINE ✅ FIXED
+# RULE ENGINE
 # ---------------------------
 def evaluate_rules(row, rules):
     issues = []
@@ -91,64 +93,50 @@ def evaluate_rules(row, rules):
         if f not in row:
             continue
 
-        if op == "min":
-            if row[f] < v:
-                issues.append(f"{f} < {v}")
+        if op == "min" and row[f] < v:
+            issues.append(f"{f} < {v}")
 
-        elif op == "max":
-            if row[f] > v:
-                issues.append(f"{f} > {v}")
+        elif op == "max" and row[f] > v:
+            issues.append(f"{f} > {v}")
 
         elif op == "range":
             if not (v[0] <= row[f] <= v[1]):
                 issues.append(f"{f} not in {v}")
 
-        elif op == "equal":
-            if row[f] != v:
-                issues.append(f"{f} != {v}")
+        elif op == "equal" and row[f] != v:
+            issues.append(f"{f} != {v}")
 
-        elif op == "not_null":
-            if pd.isna(row[f]):
-                issues.append(f"{f} is null")
-
-        elif op == "greater_field":
-            if f in row and v in row and row[f] <= row[v]:
-                issues.append(f"{f} <= {v}")
-
-        elif op == "less_field":
-            if f in row and v in row and row[f] >= row[v]:
-                issues.append(f"{f} >= {v}")
+        elif op == "not_null" and pd.isna(row[f]):
+            issues.append(f"{f} is null")
 
     return "✅ Compliant" if not issues else "❌ " + ", ".join(issues)
 
 # ---------------------------
-# FILE READERS ✅ SAFE
+# READ RULE FILES
 # ---------------------------
-def read_rules_file(file, columns):
+def read_rules_file(file):
     try:
         if file.name.endswith(".txt"):
-            return generate_rules_from_text(file.read().decode("utf-8"), columns)
-
-        elif file.name.endswith(".csv"):
-            df = pd.read_csv(file)
-            return df.to_dict(orient="records")
+            return file.read().decode("utf-8")
 
         elif file.name.endswith(".docx"):
             from docx import Document
             doc = Document(file)
-            text = " ".join([p.text for p in doc.paragraphs])
-            return generate_rules_from_text(text, columns)
+            return " ".join([p.text for p in doc.paragraphs])
 
         elif file.name.endswith(".pdf"):
             from PyPDF2 import PdfReader
             reader = PdfReader(file)
-            text = " ".join([p.extract_text() or "" for p in reader.pages])
-            return generate_rules_from_text(text, columns)
+            return " ".join([p.extract_text() or "" for p in reader.pages])
+
+        elif file.name.endswith(".csv"):
+            df = pd.read_csv(file)
+            return " ".join(df.astype(str).values.flatten())
 
     except:
-        return []
+        return ""
 
-    return []
+    return ""
 
 # ---------------------------
 # SIDEBAR
@@ -156,10 +144,10 @@ def read_rules_file(file, columns):
 st.sidebar.header("Inputs")
 
 data_file = st.sidebar.file_uploader("Upload Data", type=["csv", "xlsx"])
-rules_file = st.sidebar.file_uploader("Upload Rules", type=["csv", "txt", "docx", "pdf"])
+rules_file = st.sidebar.file_uploader("Upload Policy File", type=["csv", "txt", "docx", "pdf"])
 
-policy_text = st.sidebar.text_area("Policy Text")
-generate = st.sidebar.button("Generate Rules")
+policy_text = st.sidebar.text_area("Or paste policy text")
+generate = st.sidebar.button("Generate Rules (AI)")
 
 rules = []
 
@@ -168,22 +156,22 @@ rules = []
 # ---------------------------
 if data_file:
 
-    # ✅ SAFE DATA READ
+    # READ DATA
     try:
         if data_file.name.endswith(".csv"):
             data = pd.read_csv(data_file)
         else:
             data = pd.read_excel(data_file, engine="openpyxl")
     except:
-        st.error("Error reading file. Check format.")
+        st.error("Error reading dataset")
         st.stop()
 
-    # RULE LOAD
+    # POLICY INPUT
     if rules_file:
-        rules = read_rules_file(rules_file, data.columns)
+        policy_text = read_rules_file(rules_file)
 
-    elif generate and policy_text:
-        rules = generate_rules_from_text(policy_text, data.columns)
+    if generate and policy_text:
+        rules = generate_rules_llm(policy_text, data.columns)
 
     col1, col2 = st.columns(2)
 
@@ -192,9 +180,10 @@ if data_file:
         st.dataframe(data)
 
     with col2:
-        st.subheader("Rules")
+        st.subheader("AI Generated Rules")
         st.write(rules if rules else "No rules")
 
+    # SEARCH
     search = st.text_input("Search")
 
     if search:
@@ -205,7 +194,7 @@ if data_file:
     if st.button("Run Compliance Check"):
 
         if not rules:
-            st.error("No rules found")
+            st.error("No rules generated")
         else:
             data["Result"] = data.apply(lambda x: evaluate_rules(x, rules), axis=1)
 
@@ -225,4 +214,5 @@ if data_file:
             st.dataframe(data)
 
 else:
-    st.info("Upload data to start")
+    st.info("Upload dataset to start")
+``
