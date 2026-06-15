@@ -5,7 +5,7 @@ import re
 st.set_page_config(layout="wide")
 
 # ---------------------------
-# CUSTOM UI STYLE
+# UI STYLE
 # ---------------------------
 st.markdown("""
 <style>
@@ -16,16 +16,6 @@ st.markdown("""
     color: white;
     border-radius: 8px;
     font-size: 18px;
-    font-weight: 500;
-}
-.green-box {
-    background-color: #49a02e;
-    padding: 35px;
-    text-align: center;
-    color: white;
-    border-radius: 8px;
-    font-size: 20px;
-    font-weight: bold;
 }
 .result-box {
     background-color: #e3a389;
@@ -88,7 +78,7 @@ def evaluate_rules(row, rules):
     return "✅" if not issues else "❌"
 
 # ---------------------------
-# TOP UI (BOXES)
+# UI LAYOUT
 # ---------------------------
 col1, col2 = st.columns(2)
 
@@ -100,10 +90,8 @@ with col2:
     st.markdown('<div class="box">HR report doc (Testing document)</div>', unsafe_allow_html=True)
     data_file = st.file_uploader("", type=["csv"])
 
-# ---------------------------
-# CENTER BUTTON
-# ---------------------------
 st.markdown("<br>", unsafe_allow_html=True)
+
 st.markdown('<div class="center">', unsafe_allow_html=True)
 run = st.button("Test Compliance")
 st.markdown('</div>', unsafe_allow_html=True)
@@ -122,9 +110,6 @@ if run and data_file and policy_text:
     compliant = data[data["Result"] == "✅"].shape[0]
     non_compliant = total - compliant
 
-    # ---------------------------
-    # RESULT CARD (LIKE IMAGE)
-    # ---------------------------
     st.markdown("<br>", unsafe_allow_html=True)
 
     st.markdown(f"""
@@ -136,13 +121,8 @@ if run and data_file and policy_text:
     </div>
     """, unsafe_allow_html=True)
 
-    # ---------------------------
-    # TABLE
-    # ---------------------------
     st.subheader("Detailed Results")
     st.dataframe(data)
 
-    # DOWNLOAD
     csv = data.to_csv(index=False).encode("utf-8")
     st.download_button("Download Report", csv, "output.csv")
-``
