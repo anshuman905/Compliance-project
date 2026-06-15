@@ -15,59 +15,23 @@ def generate_rules_from_text(policy_text):
     rules = []
     text = policy_text.lower()
 
-    # ABOVE / GREATER THAN
     for field, _, value in re.findall(r'(\w+)\s+(above|greater than)\s+(\d+)', text):
-        rules.append({
-            "field": field.capitalize(),
-            "operator": "min",
-            "value": int(value),
-            "severity": "High"
-        })
+        rules.append({"field": field.capitalize(), "operator": "min", "value": int(value), "severity": "High"})
 
-    # BELOW / LESS THAN
     for field, _, value in re.findall(r'(\w+)\s+(below|less than)\s+(\d+)', text):
-        rules.append({
-            "field": field.capitalize(),
-            "operator": "max",
-            "value": int(value),
-            "severity": "High"
-        })
+        rules.append({"field": field.capitalize(), "operator": "max", "value": int(value), "severity": "High"})
 
-    # BETWEEN RANGE
     for field, v1, v2 in re.findall(r'(\w+)\s+between\s+(\d+)\s+and\s+(\d+)', text):
-        rules.append({
-            "field": field.capitalize(),
-            "operator": "range",
-            "value": (int(v1), int(v2)),
-            "severity": "Medium"
-        })
+        rules.append({"field": field.capitalize(), "operator": "range", "value": (int(v1), int(v2)), "severity": "Medium"})
 
-    # EQUALS
     for field, value in re.findall(r'(\w+)\s+equals\s+(\d+)', text):
-        rules.append({
-            "field": field.capitalize(),
-            "operator": "equal",
-            "value": int(value),
-            "severity": "Medium"
-        })
+        rules.append({"field": field.capitalize(), "operator": "equal", "value": int(value), "severity": "Medium"})
 
-    # NOT NULL
     for field in re.findall(r'(\w+)\s+(must not be empty|mandatory|should not be empty)', text):
-        rules.append({
-            "field": field[0].capitalize(),
-            "operator": "not_null",
-            "value": None,
-            "severity": "High"
-        })
+        rules.append({"field": field[0].capitalize(), "operator": "not_null", "value": None, "severity": "High"})
 
-    # SLA HOURS
     for val in re.findall(r'within\s+(\d+)\s+hours', text):
-        rules.append({
-            "field": "Time",
-            "operator": "max",
-            "value": int(val),
-            "severity": "Critical"
-        })
+        rules.append({"field": "Time", "operator": "max", "value": int(val), "severity": "Critical"})
 
     return rules
 
@@ -105,12 +69,31 @@ def evaluate_rules(row, rules):
     return "✅ Compliant" if not issues else "❌ " + ", ".join(issues)
 
 # ---------------------------
+# READ RULE FILE (ADDED)
+# ---------------------------
+def read_rules_file(file):
+    if file.name.endswith(".txt"):
+        return generate_rules_from_text(file.read().decode("utf-8"))
+
+    elif file.name.endswith(".csv"):
+        df = pd.read_csv(file)
+        return df.to_dict(orient="records")
+
+    elif file.name.endswith(".docx"):
+        from docx import Document
+        doc = Document(file)
+        text = " ".join([p.text for p in doc.paragraphs])
+        return generate_rules_from_text(text)
+
+    return []
+
+# ---------------------------
 # SIDEBAR
 # ---------------------------
 st.sidebar.header("Inputs")
 
-data_file = st.sidebar.file_uploader("Upload Data CSV", type=["csv"])
-rules_file = st.sidebar.file_uploader("Upload Rules CSV", type=["csv"])
+data_file = st.sidebar.file_uploader("Upload Data", type=["csv", "xlsx"])
+rules_file = st.sidebar.file_uploader("Upload Rules File", type=["csv", "txt", "docx"])
 
 policy_text = st.sidebar.text_area("Policy Text")
 generate = st.sidebar.button("Generate Rules")
@@ -120,23 +103,25 @@ generate = st.sidebar.button("Generate Rules")
 # ---------------------------
 rules = []
 
-if generate and policy_text:
+if rules_file:
+    rules = read_rules_file(rules_file)
+
+elif generate and policy_text:
     rules = generate_rules_from_text(policy_text)
     st.session_state["rules"] = rules
 
 elif "rules" in st.session_state:
     rules = st.session_state["rules"]
 
-elif rules_file:
-    rules_df = pd.read_csv(rules_file)
-    rules = rules_df.to_dict(orient="records")
-
 # ---------------------------
 # MAIN
 # ---------------------------
 if data_file:
 
-    data = pd.read_csv(data_file)
+    if data_file.name.endswith(".csv"):
+        data = pd.read_csv(data_file)
+    else:
+        data = pd.read_excel(data_file, engine="openpyxl")
 
     col1, col2 = st.columns(2)
 
@@ -165,7 +150,6 @@ if data_file:
             compliant = data[data["Result"].str.contains("✅")].shape[0]
             violations = total - compliant
 
-            # ✅ ✅ ADDED ONLY THIS (RESULT DASHBOARD)
             st.markdown("<br>", unsafe_allow_html=True)
             st.markdown(f"""
             <div style="background-color:#e3a389;padding:25px;border-radius:8px;text-align:center;font-size:18px;">
@@ -175,28 +159,24 @@ if data_file:
                 <p>Non-Compliant: {violations} ❌</p>
             </div>
             """, unsafe_allow_html=True)
-            # ✅ ✅ END
 
             c1, c2, c3 = st.columns(3)
             c1.metric("Total", total)
             c2.metric("Compliant", compliant)
             c3.metric("Violations", violations)
 
-            # CHART
             chart = pd.DataFrame({
                 "Status": ["Compliant", "Violations"],
                 "Count": [compliant, violations]
             })
             st.bar_chart(chart.set_index("Status"))
 
-            # RESULTS TABLE
             def highlight(row):
                 return ['background-color: #ffcccc' if "❌" in row["Result"]
                         else 'background-color: #ccffcc'] * len(row)
 
             st.dataframe(data.style.apply(highlight, axis=1))
 
-            # DOWNLOAD
             csv = data.to_csv(index=False).encode('utf-8')
             st.download_button("Download Report", csv, "output.csv")
 
