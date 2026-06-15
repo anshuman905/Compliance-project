@@ -1,75 +1,69 @@
 import streamlit as st
 import pandas as pd
 import re
-import requests
+from transformers import pipeline
 
 # ---------------------------
 # PAGE SETUP
 # ---------------------------
-st.set_page_config(page_title="Compliance System", layout="wide")
+st.set_page_config(page_title="AI Compliance", layout="wide")
 st.title("📊 AI Compliance Monitoring System")
 
 # ---------------------------
-# HF CONFIG (SAFE)
+# LOAD MODEL (LOCAL AI ✅)
 # ---------------------------
-HF_TOKEN = st.secrets.get("HF_TOKEN", None)
-API_URL = "https://api-inference.huggingface.co/models/google/flan-t5-base"
+@st.cache_resource
+def load_model():
+    return pipeline("text2text-generation", model="google/flan-t5-small")
 
-headers = {"Authorization": f"Bearer {HF_TOKEN}"} if HF_TOKEN else {}
-
-# ---------------------------
-# SAFE HF CALL ✅
-# ---------------------------
-def query_hf(prompt):
-    if not HF_TOKEN:
-        return ""
-
-    try:
-        response = requests.post(
-            API_URL,
-            headers=headers,
-            json={"inputs": prompt},
-            timeout=20
-        )
-
-        if response.status_code != 200:
-            return ""
-
-        result = response.json()
-
-        if isinstance(result, list) and "generated_text" in result[0]:
-            return result[0]["generated_text"]
-
-        return ""
-
-    except:
-        return ""
+llm = load_model()
 
 # ---------------------------
-# LLM RULE GENERATOR
+# COLUMN MATCH
 # ---------------------------
-def generate_rules_llm(policy_text, columns):
+def match_column(field, columns):
+    field = field.lower()
+    for col in columns:
+        if field in col.lower():
+            return col
+    return None
+
+# ---------------------------
+# AI RULE GENERATOR ✅
+# ---------------------------
+def generate_rules_ai(policy_text, columns):
+
     prompt = f"""
-    Convert policy into rules.
-
-    Format: field, operator, value
+    Extract structured rules from this policy.
+    
+    Output format:
+    field, operator, value
+    
     Operators: min, max, range, equal, not_null
-
-    Policy: {policy_text}
-    Columns: {list(columns)}
+    
+    Policy:
+    {policy_text}
     """
 
-    result = query_hf(prompt)
+    try:
+        result = llm(prompt, max_length=200)[0]["generated_text"]
+    except:
+        return []
 
     rules = []
 
     for line in result.split("\n"):
         parts = line.split(",")
+
         if len(parts) >= 3:
             try:
                 field = parts[0].strip()
                 operator = parts[1].strip()
                 value = parts[2].strip()
+
+                col = match_column(field, columns)
+                if not col:
+                    continue
 
                 if operator == "range":
                     v1, v2 = map(int, value.split("-"))
@@ -78,30 +72,12 @@ def generate_rules_llm(policy_text, columns):
                     value = int(value)
 
                 rules.append({
-                    "field": field,
+                    "field": col,
                     "operator": operator,
                     "value": value
                 })
             except:
                 continue
-
-    return rules
-
-# ---------------------------
-# REGEX FALLBACK ✅
-# ---------------------------
-def generate_rules_from_text(policy_text, columns):
-    rules = []
-    text = policy_text.lower()
-
-    for field, _, value in re.findall(r'(\w+)\s+(above|greater than|at least|min|minimum)\s+(\d+)', text):
-        rules.append({"field": field.capitalize(), "operator": "min", "value": int(value)})
-
-    for field, _, value in re.findall(r'(\w+)\s+(below|less than|at most|max|maximum)\s+(\d+)', text):
-        rules.append({"field": field.capitalize(), "operator": "max", "value": int(value)})
-
-    for field, v1, v2 in re.findall(r'(\w+)\s+between\s+(\d+)\s+and\s+(\d+)', text):
-        rules.append({"field": field.capitalize(), "operator": "range", "value": (int(v1), int(v2))})
 
     return rules
 
@@ -135,15 +111,16 @@ def evaluate_rules(row, rules):
 
             elif op == "not_null" and pd.isna(row[f]):
                 issues.append(f"{f} is null")
+
         except:
             continue
 
     return "✅" if not issues else "❌ " + ", ".join(issues)
 
 # ---------------------------
-# READ POLICY FILE ✅
+# READ POLICY
 # ---------------------------
-def read_policy_file(file):
+def read_policy(file):
     try:
         if file.name.endswith(".txt"):
             return file.read().decode("utf-8")
@@ -168,12 +145,12 @@ def read_policy_file(file):
     return ""
 
 # ---------------------------
-# SIDEBAR
+# UI INPUT
 # ---------------------------
 st.sidebar.header("Inputs")
 
-data_file = st.sidebar.file_uploader("Upload Data", type=["csv", "xlsx"])
-policy_file = st.sidebar.file_uploader("Upload Rules", type=["txt", "csv", "docx", "pdf"])
+data_file = st.sidebar.file_uploader("Upload Data", ["csv", "xlsx"])
+policy_file = st.sidebar.file_uploader("Upload Rules", ["txt", "csv", "docx", "pdf"])
 
 policy_text = st.sidebar.text_area("Or paste policy")
 
@@ -184,27 +161,17 @@ rules = []
 # ---------------------------
 if data_file:
 
-    # READ DATA
-    try:
-        if data_file.name.endswith(".csv"):
-            data = pd.read_csv(data_file)
-        else:
-            data = pd.read_excel(data_file, engine="openpyxl")
-    except:
-        st.error("❌ Error reading dataset")
-        st.stop()
+    if data_file.name.endswith(".csv"):
+        data = pd.read_csv(data_file)
+    else:
+        data = pd.read_excel(data_file, engine="openpyxl")
 
-    # GET POLICY TEXT
     if policy_file:
-        policy_text = read_policy_file(policy_file)
+        policy_text = read_policy(policy_file)
 
-    # ✅ AUTO RULE GENERATION (AI + FALLBACK)
     if policy_text:
-        rules = generate_rules_llm(policy_text, data.columns)
-
-        if not rules:
-            st.warning("⚠️ AI unavailable → using fallback rules")
-            rules = generate_rules_from_text(policy_text, data.columns)
+        with st.spinner("AI generating rules..."):
+            rules = generate_rules_ai(policy_text, data.columns)
 
     col1, col2 = st.columns(2)
 
@@ -213,31 +180,22 @@ if data_file:
         st.dataframe(data)
 
     with col2:
-        st.subheader("Rules")
+        st.subheader("AI Rules")
         st.write(rules if rules else "No rules generated")
 
-    # SEARCH
-    search = st.text_input("Search")
-
-    if search:
-        data = data[data.astype(str).apply(
-            lambda r: r.str.contains(search, case=False, na=False)
-        ).any(axis=1)]
-
-    # RUN
     if st.button("Run Compliance Check"):
 
         if not rules:
-            st.error("No rules found")
+            st.error("No rules generated")
         else:
             data["Result"] = data.apply(lambda x: evaluate_rules(x, rules), axis=1)
 
             total = len(data)
-            compliant = data[data["Result"].str.contains("✅")].shape[0]
+            compliant = (data["Result"] == "✅").sum()
             violations = total - compliant
 
             st.markdown(f"""
-            <div style="background-color:#e3a389;padding:20px;border-radius:8px;text-align:center;">
+            <div style="background:#e3a389;padding:20px;border-radius:8px;text-align:center;">
                 <h3>Results Dashboard</h3>
                 <p>Total: {total}</p>
                 <p>Compliant: {compliant} ✅</p>
