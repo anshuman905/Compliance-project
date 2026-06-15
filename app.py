@@ -2,11 +2,14 @@ import streamlit as st
 import pandas as pd
 import re
 
+# ---------------------------
+# PAGE SETUP
+# ---------------------------
 st.set_page_config(page_title="Compliance System", layout="wide")
 st.title("📊 AI-like Compliance Monitoring System")
 
 # ---------------------------
-# INTELLIGENT COLUMN MATCH
+# COLUMN MATCH
 # ---------------------------
 def match_column(sentence, columns):
     for col in columns:
@@ -15,13 +18,12 @@ def match_column(sentence, columns):
     return None
 
 # ---------------------------
-# LLM-LIKE RULE ENGINE ✅
+# RULE GENERATOR (STABLE + SMART)
 # ---------------------------
 def generate_rules(policy_text, columns):
     rules = []
     text = policy_text.lower()
 
-    # Break into meaningful chunks
     sentences = re.split(r"[.\n]", text)
 
     for sentence in sentences:
@@ -35,11 +37,7 @@ def generate_rules(policy_text, columns):
 
         nums = re.findall(r"\d+", sentence)
 
-        # -----------------------
-        # SEMANTIC RULE MAPPING ✅
-        # -----------------------
-
-        # RANGE detection
+        # RANGE
         if "between" in sentence and len(nums) >= 2:
             rules.append({
                 "field": col,
@@ -48,9 +46,9 @@ def generate_rules(policy_text, columns):
             })
             continue
 
-        # NOT NULL (IMPORTANT in enterprise docs)
+        # NOT NULL
         if any(w in sentence for w in [
-            "mandatory", "required", "must be filled", 
+            "mandatory", "required", "must be filled",
             "cannot be empty", "should not be empty"
         ]):
             rules.append({
@@ -66,7 +64,7 @@ def generate_rules(policy_text, columns):
 
         value = int(nums[0])
 
-        # MIN (semantic understanding)
+        # MIN
         if any(w in sentence for w in [
             "minimum", "at least", "not less", "above", "greater"
         ]):
@@ -97,11 +95,9 @@ def generate_rules(policy_text, columns):
                 "operator": "equal",
                 "value": value
             })
-            continue
 
-    # ✅ ENSURE NOT EMPTY (IMPORTANT)
-    if not rules and columns:
-        # fallback generic rule
+    # ✅ SAFE FALLBACK (NO ERROR)
+    if not rules and len(columns) > 0:
         rules.append({
             "field": columns[0],
             "operator": "not_null",
@@ -167,10 +163,8 @@ def read_policy(file):
             from PyPDF2 import PdfReader
             reader = PdfReader(file)
             return " ".join([p.extract_text() or "" for p in reader.pages])
-
     except:
         return ""
-
     return ""
 
 # ---------------------------
@@ -184,12 +178,19 @@ policy_text = st.sidebar.text_area("Or paste policy")
 
 rules = []
 
+# ---------------------------
+# MAIN
+# ---------------------------
 if data_file:
 
-    if data_file.name.endswith(".csv"):
-        data = pd.read_csv(data_file)
-    else:
-        data = pd.read_excel(data_file, engine="openpyxl")
+    try:
+        if data_file.name.endswith(".csv"):
+            data = pd.read_csv(data_file)
+        else:
+            data = pd.read_excel(data_file, engine="openpyxl")
+    except:
+        st.error("Error reading dataset")
+        st.stop()
 
     if policy_file:
         policy_text = read_policy(policy_file)
@@ -204,18 +205,24 @@ if data_file:
         st.dataframe(data)
 
     with col2:
-        st.subheader("AI-like Rules")
+        st.subheader("Generated Rules")
         st.write(rules)
 
     if st.button("Run Compliance Check"):
+
         data["Result"] = data.apply(lambda x: evaluate_rules(x, rules), axis=1)
 
         total = len(data)
-        comp = (data["Result"] == "✅ Compliant").sum()
+        compliant = (data["Result"] == "✅ Compliant").sum()
 
-        st.write(f"Total: {total}")
-        st.write(f"Compliant: {comp}")
-        st.write(f"Violations: {total-comp}")
+        st.markdown(f"""
+        <div style="background:#e3a389;padding:20px;border-radius:8px;text-align:center;">
+            <h3>Results Dashboard</h3>
+            <p>Total: {total}</p>
+            <p>Compliant: {compliant} ✅</p>
+            <p>Non-Compliant: {total - compliant} ❌</p>
+        </div>
+        """, unsafe_allow_html=True)
 
         st.dataframe(data)
 
