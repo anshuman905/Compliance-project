@@ -3,4 +3,5 @@ pandas
 openpyxl
 python-docx
 PyPDF2
-requests
+transformers
+torch
