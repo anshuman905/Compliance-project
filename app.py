@@ -5,7 +5,7 @@ import re
 st.set_page_config(layout="wide")
 
 # ---------------------------
-# CUSTOM UI STYLE
+# UI STYLE
 # ---------------------------
 st.markdown("""
 <style>
@@ -78,28 +78,58 @@ def evaluate_rules(row, rules):
     return "✅" if not issues else "❌"
 
 # ---------------------------
-# TOP UI (UPLOAD BOXES)
+# READ POLICY FILE
+# ---------------------------
+def read_policy_file(file):
+    if file.name.endswith(".txt"):
+        return file.read().decode("utf-8")
+
+    elif file.name.endswith(".csv"):
+        df = pd.read_csv(file)
+        return " ".join(df.astype(str).values.flatten())
+
+    elif file.name.endswith(".docx"):
+        try:
+            from docx import Document
+            doc = Document(file)
+            return " ".join([p.text for p in doc.paragraphs])
+        except:
+            return ""
+
+    return ""
+
+# ---------------------------
+# READ DATA FILE
+# ---------------------------
+def read_data(file):
+    if file.name.endswith(".csv"):
+        return pd.read_csv(file)
+
+    elif file.name.endswith(".xlsx"):
+        return pd.read_excel(file, engine="openpyxl")
+
+    return None
+
+# ---------------------------
+# UI LAYOUT
 # ---------------------------
 col1, col2 = st.columns(2)
 
 with col1:
     st.markdown('<div class="box">Upload Policy document</div>', unsafe_allow_html=True)
-    policy_file = st.file_uploader("", type=["txt"], key="policy_file")
+    policy_file = st.file_uploader("", type=["txt", "csv", "docx"])
 
 with col2:
     st.markdown('<div class="box">HR report doc (Testing document)</div>', unsafe_allow_html=True)
-    data_file = st.file_uploader("", type=["csv"], key="data_file")
+    data_file = st.file_uploader("", type=["csv", "xlsx"])
 
 # ---------------------------
-# READ POLICY TEXT
+# PROCESS POLICY
 # ---------------------------
 policy_text = ""
 
 if policy_file is not None:
-    try:
-        policy_text = policy_file.read().decode("utf-8")
-    except:
-        policy_text = ""
+    policy_text = read_policy_file(policy_file)
 
 # ---------------------------
 # CENTER BUTTON
@@ -113,9 +143,9 @@ st.markdown('</div>', unsafe_allow_html=True)
 # ---------------------------
 # MAIN LOGIC
 # ---------------------------
-if run and data_file is not None and policy_text != "":
+if run and data_file is not None and policy_text:
 
-    data = pd.read_csv(data_file)
+    data = read_data(data_file)
     rules = generate_rules_from_text(policy_text)
 
     data["Result"] = data.apply(lambda x: evaluate_rules(x, rules), axis=1)
@@ -125,7 +155,7 @@ if run and data_file is not None and policy_text != "":
     non_compliant = total - compliant
 
     # ---------------------------
-    # RESULT DASHBOARD
+    # DASHBOARD
     # ---------------------------
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -139,16 +169,14 @@ if run and data_file is not None and policy_text != "":
     """, unsafe_allow_html=True)
 
     # ---------------------------
-    # TABLE
+    # RESULT TABLE
     # ---------------------------
     st.subheader("Detailed Results")
     st.dataframe(data)
 
-    # ---------------------------
     # DOWNLOAD
-    # ---------------------------
     csv = data.to_csv(index=False).encode("utf-8")
     st.download_button("Download Report", csv, "output.csv")
 
 else:
-    st.info("Upload policy (.txt) and data (.csv) and click Test Compliance")
+    st.info("Upload policy (txt/csv/docx) and dataset (csv/xlsx) then click Test Compliance")
