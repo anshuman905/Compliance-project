@@ -5,7 +5,7 @@ import re
 st.set_page_config(layout="wide")
 
 # ---------------------------
-# UI STYLE
+# CUSTOM UI STYLE
 # ---------------------------
 st.markdown("""
 <style>
@@ -78,18 +78,32 @@ def evaluate_rules(row, rules):
     return "✅" if not issues else "❌"
 
 # ---------------------------
-# UI LAYOUT
+# TOP UI (UPLOAD BOXES)
 # ---------------------------
 col1, col2 = st.columns(2)
 
 with col1:
     st.markdown('<div class="box">Upload Policy document</div>', unsafe_allow_html=True)
-    policy_text = st.text_area("", key="policy")
+    policy_file = st.file_uploader("", type=["txt"], key="policy_file")
 
 with col2:
     st.markdown('<div class="box">HR report doc (Testing document)</div>', unsafe_allow_html=True)
-    data_file = st.file_uploader("", type=["csv"])
+    data_file = st.file_uploader("", type=["csv"], key="data_file")
 
+# ---------------------------
+# READ POLICY TEXT
+# ---------------------------
+policy_text = ""
+
+if policy_file is not None:
+    try:
+        policy_text = policy_file.read().decode("utf-8")
+    except:
+        policy_text = ""
+
+# ---------------------------
+# CENTER BUTTON
+# ---------------------------
 st.markdown("<br>", unsafe_allow_html=True)
 
 st.markdown('<div class="center">', unsafe_allow_html=True)
@@ -99,7 +113,7 @@ st.markdown('</div>', unsafe_allow_html=True)
 # ---------------------------
 # MAIN LOGIC
 # ---------------------------
-if run and data_file and policy_text:
+if run and data_file is not None and policy_text != "":
 
     data = pd.read_csv(data_file)
     rules = generate_rules_from_text(policy_text)
@@ -110,6 +124,9 @@ if run and data_file and policy_text:
     compliant = data[data["Result"] == "✅"].shape[0]
     non_compliant = total - compliant
 
+    # ---------------------------
+    # RESULT DASHBOARD
+    # ---------------------------
     st.markdown("<br>", unsafe_allow_html=True)
 
     st.markdown(f"""
@@ -121,8 +138,17 @@ if run and data_file and policy_text:
     </div>
     """, unsafe_allow_html=True)
 
+    # ---------------------------
+    # TABLE
+    # ---------------------------
     st.subheader("Detailed Results")
     st.dataframe(data)
 
+    # ---------------------------
+    # DOWNLOAD
+    # ---------------------------
     csv = data.to_csv(index=False).encode("utf-8")
     st.download_button("Download Report", csv, "output.csv")
+
+else:
+    st.info("Upload policy (.txt) and data (.csv) and click Test Compliance")
