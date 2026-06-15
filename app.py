@@ -2,6 +2,9 @@ import streamlit as st
 import pandas as pd
 import re
 
+# ---------------------------
+# PAGE SETUP
+# ---------------------------
 st.set_page_config(page_title="Compliance System", layout="wide")
 st.title("📊 Compliance Monitoring System")
 
@@ -10,16 +13,15 @@ st.title("📊 Compliance Monitoring System")
 # ---------------------------
 def match_column(field, columns):
     field = field.lower()
-    scores = {}
     for col in columns:
         if field == col.lower():
             return col
         if field in col.lower():
-            scores[col] = len(field)
-    return max(scores, key=scores.get) if scores else None
+            return col
+    return None
 
 # ---------------------------
-# ADVANCED RULE GENERATOR
+# FINAL RULE GENERATOR
 # ---------------------------
 def generate_rules_from_text(policy_text, columns):
     rules = []
@@ -35,35 +37,30 @@ def generate_rules_from_text(policy_text, columns):
         (r'(\w+)\s*<\s*(\w+)', "less_field"),
     ]
 
-    for pattern, rule_type in patterns:
+    for pattern, rtype in patterns:
         matches = re.findall(pattern, text)
+
         for m in matches:
 
-            if rule_type in ["greater_field", "less_field"]:
+            if rtype in ["greater_field", "less_field"]:
                 f1 = match_column(m[0], columns)
                 f2 = match_column(m[1], columns)
                 if f1 and f2:
-                    rules.append({
-                        "field": f1,
-                        "operator": rule_type,
-                        "value": f2
-                    })
+                    rules.append({"field": f1, "operator": rtype, "value": f2})
                 continue
 
-            field = m[0]
-            col = match_column(field, columns)
-
+            col = match_column(m[0], columns)
             if not col:
                 continue
 
-            if rule_type == "range":
+            if rtype == "range":
                 rules.append({
                     "field": col,
                     "operator": "range",
                     "value": (int(m[1]), int(m[2]))
                 })
 
-            elif rule_type == "not_null":
+            elif rtype == "not_null":
                 rules.append({
                     "field": col,
                     "operator": "not_null",
@@ -73,7 +70,7 @@ def generate_rules_from_text(policy_text, columns):
             else:
                 rules.append({
                     "field": col,
-                    "operator": rule_type,
+                    "operator": rtype,
                     "value": int(m[-1])
                 })
 
@@ -88,41 +85,42 @@ def evaluate_rules(row, rules):
     for r in rules:
         f = r["field"]
         op = r["operator"]
-        val = r["value"]
+        v = r["value"]
 
         if f not in row:
             continue
 
-        if op == "min" and row[f] < val:
-            issues.append(f"{f} < {val}")
+        if op == "min" and row[f] < v:
+            issues.append(f"{f} < {v}")
 
-        elif op == "max" and row[f] > val:
-            issues.append(f"{f} > {val}")
+        elif op == "max" and row[f] > v:
+            issues.append(f"{f} > {v}")
 
         elif op == "range":
-            if not (val[0] <= row[f] <= val[1]):
-                issues.append(f"{f} not in {val}")
+            if not (v[0] <= row[f] <= v[1]):
+                issues.append(f"{f} not in {v}")
 
-        elif op == "equal" and row[f] != val:
-            issues.append(f"{f} != {val}")
+        elif op == "equal" and row[f] != v:
+            issues.append(f"{f} != {v}")
 
         elif op == "not_null" and pd.isna(row[f]):
             issues.append(f"{f} is null")
 
         elif op == "greater_field":
-            if row[f] <= row[val]:
-                issues.append(f"{f} <= {val}")
+            if row[f] <= row[v]:
+                issues.append(f"{f} <= {v}")
 
         elif op == "less_field":
-            if row[f] >= row[val]:
-                issues.append(f"{f} >= {val}")
+            if row[f] >= row[v]:
+                issues.append(f"{f} >= {v}")
 
-    return "✅ Compliant" if not issues else "❌ " + ", ".join(issues)
+    return "✅" if not issues else "❌ " + ", ".join(issues)
 
 # ---------------------------
-# FILE READERS
+# FILE READERS (PDF ADDED ✅)
 # ---------------------------
 def read_rules_file(file, columns):
+
     if file.name.endswith(".txt"):
         return generate_rules_from_text(file.read().decode("utf-8"), columns)
 
@@ -136,6 +134,15 @@ def read_rules_file(file, columns):
         text = " ".join([p.text for p in doc.paragraphs])
         return generate_rules_from_text(text, columns)
 
+    elif file.name.endswith(".pdf"):
+        try:
+            from PyPDF2 import PdfReader
+            reader = PdfReader(file)
+            text = " ".join([page.extract_text() for page in reader.pages if page.extract_text()])
+            return generate_rules_from_text(text, columns)
+        except:
+            return []
+
     return []
 
 # ---------------------------
@@ -144,7 +151,7 @@ def read_rules_file(file, columns):
 st.sidebar.header("Inputs")
 
 data_file = st.sidebar.file_uploader("Upload Data", type=["csv", "xlsx"])
-rules_file = st.sidebar.file_uploader("Upload Rules", type=["csv", "txt", "docx"])
+rules_file = st.sidebar.file_uploader("Upload Rules", type=["csv", "txt", "docx", "pdf"])
 
 policy_text = st.sidebar.text_area("Policy Text")
 generate = st.sidebar.button("Generate Rules")
@@ -161,7 +168,6 @@ if data_file:
     else:
         data = pd.read_excel(data_file, engine="openpyxl")
 
-    # RULE LOAD
     if rules_file:
         rules = read_rules_file(rules_file, data.columns)
 
@@ -178,8 +184,7 @@ if data_file:
         st.subheader("Rules")
         st.write(rules if rules else "No rules")
 
-    # ADVANCED SEARCH
-    search = st.text_input("Search (any field)")
+    search = st.text_input("Search")
 
     if search:
         data = data[data.astype(str).apply(
