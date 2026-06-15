@@ -13,12 +13,9 @@ st.title("📊 Smart Compliance Monitoring System")
 # ---------------------------
 def match_column(field, columns):
     field = field.lower()
-
     for col in columns:
-        col_lower = col.lower()
-        if field in col_lower or col_lower in field:
+        if field in col.lower() or col.lower() in field:
             return col
-
     return None
 
 # ---------------------------
@@ -28,47 +25,47 @@ def generate_rules(policy_text, columns):
     rules = []
     text = policy_text.lower()
 
-    # Split sentences intelligently
+    # Split into sentences
     sentences = re.split(r"[.\n]", text)
 
     for sentence in sentences:
 
-        # MIN conditions
-        match = re.search(r'(\w+).*?(above|greater than|at least|min|minimum)\s+(\d+)', sentence)
-        if match:
-            col = match_column(match.group(1), columns)
+        # MIN
+        m = re.search(r'(\w+).*?(above|greater than|at least|min|minimum)\s+(\d+)', sentence)
+        if m:
+            col = match_column(m.group(1), columns)
             if col:
-                rules.append({"field": col, "operator": "min", "value": int(match.group(3))})
+                rules.append({"field": col, "operator": "min", "value": int(m.group(3))})
 
-        # MAX conditions
-        match = re.search(r'(\w+).*?(below|less than|at most|max|maximum)\s+(\d+)', sentence)
-        if match:
-            col = match_column(match.group(1), columns)
+        # MAX
+        m = re.search(r'(\w+).*?(below|less than|at most|max|maximum)\s+(\d+)', sentence)
+        if m:
+            col = match_column(m.group(1), columns)
             if col:
-                rules.append({"field": col, "operator": "max", "value": int(match.group(3))})
+                rules.append({"field": col, "operator": "max", "value": int(m.group(3))})
 
         # RANGE
-        match = re.search(r'(\w+).*?between\s+(\d+)\s+and\s+(\d+)', sentence)
-        if match:
-            col = match_column(match.group(1), columns)
+        m = re.search(r'(\w+).*?between\s+(\d+)\s+and\s+(\d+)', sentence)
+        if m:
+            col = match_column(m.group(1), columns)
             if col:
                 rules.append({
                     "field": col,
                     "operator": "range",
-                    "value": (int(match.group(2)), int(match.group(3)))
+                    "value": (int(m.group(2)), int(m.group(3)))
                 })
 
         # EQUAL
-        match = re.search(r'(\w+).*?(equals|equal to|is)\s+(\d+)', sentence)
-        if match:
-            col = match_column(match.group(1), columns)
+        m = re.search(r'(\w+).*?(equals|equal to|is)\s+(\d+)', sentence)
+        if m:
+            col = match_column(m.group(1), columns)
             if col:
-                rules.append({"field": col, "operator": "equal", "value": int(match.group(3))})
+                rules.append({"field": col, "operator": "equal", "value": int(m.group(3))})
 
         # NOT NULL
-        match = re.search(r'(\w+).*?(must not be empty|required|mandatory)', sentence)
-        if match:
-            col = match_column(match.group(1), columns)
+        m = re.search(r'(\w+).*?(must not be empty|required|mandatory)', sentence)
+        if m:
+            col = match_column(m.group(1), columns)
             if col:
                 rules.append({"field": col, "operator": "not_null", "value": None})
 
@@ -108,7 +105,7 @@ def evaluate_rules(row, rules):
         except:
             continue
 
-    return "✅" if not issues else "❌ " + ", ".join(issues)
+    return "✅ Compliant" if not issues else "❌ " + ", ".join(issues)
 
 # ---------------------------
 # READ POLICY FILE
@@ -138,7 +135,7 @@ def read_policy(file):
     return ""
 
 # ---------------------------
-# UI
+# UI INPUT
 # ---------------------------
 st.sidebar.header("Inputs")
 
@@ -153,17 +150,25 @@ rules = []
 # ---------------------------
 if data_file:
 
-    if data_file.name.endswith(".csv"):
-        data = pd.read_csv(data_file)
-    else:
-        data = pd.read_excel(data_file, engine="openpyxl")
+    # Load data
+    try:
+        if data_file.name.endswith(".csv"):
+            data = pd.read_csv(data_file)
+        else:
+            data = pd.read_excel(data_file, engine="openpyxl")
+    except:
+        st.error("❌ Error reading dataset")
+        st.stop()
 
+    # Load policy
     if policy_file:
         policy_text = read_policy(policy_file)
 
+    # Generate rules
     if policy_text:
         rules = generate_rules(policy_text, data.columns)
 
+    # Layout
     col1, col2 = st.columns(2)
 
     with col1:
@@ -174,6 +179,15 @@ if data_file:
         st.subheader("Generated Rules")
         st.write(rules if rules else "No rules generated")
 
+    # Search
+    search = st.text_input("Search")
+
+    if search:
+        data = data[data.astype(str).apply(
+            lambda r: r.str.contains(search, case=False, na=False)
+        ).any(axis=1)]
+
+    # Run Check
     if st.button("Run Compliance Check"):
 
         if not rules:
@@ -182,7 +196,7 @@ if data_file:
             data["Result"] = data.apply(lambda x: evaluate_rules(x, rules), axis=1)
 
             total = len(data)
-            compliant = (data["Result"] == "✅").sum()
+            compliant = (data["Result"] == "✅ Compliant").sum()
             violations = total - compliant
 
             st.markdown(f"""
