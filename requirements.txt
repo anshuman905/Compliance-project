@@ -1,2 +1,6 @@
 streamlit
 pandas
+openpyxl
+python-docx
+PyPDF2
+spacy
