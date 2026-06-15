@@ -165,6 +165,18 @@ if data_file:
             compliant = data[data["Result"].str.contains("✅")].shape[0]
             violations = total - compliant
 
+            # ✅ ✅ ADDED ONLY THIS (RESULT DASHBOARD)
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.markdown(f"""
+            <div style="background-color:#e3a389;padding:25px;border-radius:8px;text-align:center;font-size:18px;">
+                <h3>Results Dashboard</h3>
+                <p>Total Records: {total}</p>
+                <p>Compliant: {compliant} ✅</p>
+                <p>Non-Compliant: {violations} ❌</p>
+            </div>
+            """, unsafe_allow_html=True)
+            # ✅ ✅ END
+
             c1, c2, c3 = st.columns(3)
             c1.metric("Total", total)
             c2.metric("Compliant", compliant)
@@ -190,16 +202,3 @@ if data_file:
 
 else:
     st.info("Upload data to start")
-    # ---------------------------
-# RESULT DASHBOARD (ADD ONLY THIS)
-# ---------------------------
-st.markdown("<br>", unsafe_allow_html=True)
-
-st.markdown(f"""
-<div style="background-color:#e3a389;padding:25px;border-radius:8px;text-align:center;font-size:18px;">
-    <h3>Results Dashboard</h3>
-    <p>Total Records: {total}</p>
-    <p>Compliant: {compliant} ✅</p>
-    <p>Non-Compliant: {non_compliant} ❌</p>
-</div>
-""", unsafe_allow_html=True)
