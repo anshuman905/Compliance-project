@@ -1,83 +1,76 @@
 import streamlit as st
 import pandas as pd
 import re
-from transformers import pipeline
 
 # ---------------------------
 # PAGE SETUP
 # ---------------------------
-st.set_page_config(page_title="AI Compliance", layout="wide")
-st.title("📊 AI Compliance Monitoring System")
+st.set_page_config(page_title="Compliance System", layout="wide")
+st.title("📊 Smart Compliance Monitoring System")
 
 # ---------------------------
-# LOAD MODEL (LOCAL AI ✅)
-# ---------------------------
-@st.cache_resource
-def load_model():
-    return pipeline("text2text-generation", model="google/flan-t5-small")
-
-llm = load_model()
-
-# ---------------------------
-# COLUMN MATCH
+# SMART COLUMN MATCH
 # ---------------------------
 def match_column(field, columns):
     field = field.lower()
+
     for col in columns:
-        if field in col.lower():
+        col_lower = col.lower()
+        if field in col_lower or col_lower in field:
             return col
+
     return None
 
 # ---------------------------
-# AI RULE GENERATOR ✅
+# ADVANCED RULE GENERATOR ✅
 # ---------------------------
-def generate_rules_ai(policy_text, columns):
-
-    prompt = f"""
-    Extract structured rules from this policy.
-    
-    Output format:
-    field, operator, value
-    
-    Operators: min, max, range, equal, not_null
-    
-    Policy:
-    {policy_text}
-    """
-
-    try:
-        result = llm(prompt, max_length=200)[0]["generated_text"]
-    except:
-        return []
-
+def generate_rules(policy_text, columns):
     rules = []
+    text = policy_text.lower()
 
-    for line in result.split("\n"):
-        parts = line.split(",")
+    # Split sentences intelligently
+    sentences = re.split(r"[.\n]", text)
 
-        if len(parts) >= 3:
-            try:
-                field = parts[0].strip()
-                operator = parts[1].strip()
-                value = parts[2].strip()
+    for sentence in sentences:
 
-                col = match_column(field, columns)
-                if not col:
-                    continue
+        # MIN conditions
+        match = re.search(r'(\w+).*?(above|greater than|at least|min|minimum)\s+(\d+)', sentence)
+        if match:
+            col = match_column(match.group(1), columns)
+            if col:
+                rules.append({"field": col, "operator": "min", "value": int(match.group(3))})
 
-                if operator == "range":
-                    v1, v2 = map(int, value.split("-"))
-                    value = (v1, v2)
-                elif operator != "not_null":
-                    value = int(value)
+        # MAX conditions
+        match = re.search(r'(\w+).*?(below|less than|at most|max|maximum)\s+(\d+)', sentence)
+        if match:
+            col = match_column(match.group(1), columns)
+            if col:
+                rules.append({"field": col, "operator": "max", "value": int(match.group(3))})
 
+        # RANGE
+        match = re.search(r'(\w+).*?between\s+(\d+)\s+and\s+(\d+)', sentence)
+        if match:
+            col = match_column(match.group(1), columns)
+            if col:
                 rules.append({
                     "field": col,
-                    "operator": operator,
-                    "value": value
+                    "operator": "range",
+                    "value": (int(match.group(2)), int(match.group(3)))
                 })
-            except:
-                continue
+
+        # EQUAL
+        match = re.search(r'(\w+).*?(equals|equal to|is)\s+(\d+)', sentence)
+        if match:
+            col = match_column(match.group(1), columns)
+            if col:
+                rules.append({"field": col, "operator": "equal", "value": int(match.group(3))})
+
+        # NOT NULL
+        match = re.search(r'(\w+).*?(must not be empty|required|mandatory)', sentence)
+        if match:
+            col = match_column(match.group(1), columns)
+            if col:
+                rules.append({"field": col, "operator": "not_null", "value": None})
 
     return rules
 
@@ -118,7 +111,7 @@ def evaluate_rules(row, rules):
     return "✅" if not issues else "❌ " + ", ".join(issues)
 
 # ---------------------------
-# READ POLICY
+# READ POLICY FILE
 # ---------------------------
 def read_policy(file):
     try:
@@ -145,13 +138,12 @@ def read_policy(file):
     return ""
 
 # ---------------------------
-# UI INPUT
+# UI
 # ---------------------------
 st.sidebar.header("Inputs")
 
 data_file = st.sidebar.file_uploader("Upload Data", ["csv", "xlsx"])
 policy_file = st.sidebar.file_uploader("Upload Rules", ["txt", "csv", "docx", "pdf"])
-
 policy_text = st.sidebar.text_area("Or paste policy")
 
 rules = []
@@ -170,8 +162,7 @@ if data_file:
         policy_text = read_policy(policy_file)
 
     if policy_text:
-        with st.spinner("AI generating rules..."):
-            rules = generate_rules_ai(policy_text, data.columns)
+        rules = generate_rules(policy_text, data.columns)
 
     col1, col2 = st.columns(2)
 
@@ -180,7 +171,7 @@ if data_file:
         st.dataframe(data)
 
     with col2:
-        st.subheader("AI Rules")
+        st.subheader("Generated Rules")
         st.write(rules if rules else "No rules generated")
 
     if st.button("Run Compliance Check"):
