@@ -9,34 +9,68 @@ st.set_page_config(page_title="Compliance System", layout="wide")
 st.title("📊 Compliance Monitoring System")
 
 # ---------------------------
-# RULE GENERATOR
+# SMART FIELD MATCHING (NEW ✅)
 # ---------------------------
-def generate_rules_from_text(policy_text):
+def match_column(field, columns):
+    field = field.lower()
+    for col in columns:
+        if field in col.lower():
+            return col
+    return None
+
+# ---------------------------
+# ENHANCED RULE GENERATOR ✅
+# ---------------------------
+def generate_rules_from_text(policy_text, columns):
     rules = []
     text = policy_text.lower()
 
-    for field, _, value in re.findall(r'(\w+)\s+(above|greater than)\s+(\d+)', text):
-        rules.append({"field": field.capitalize(), "operator": "min", "value": int(value), "severity": "High"})
+    patterns = [
+        (r'(\w+)\s+(above|greater than|at least|min|minimum)\s+(\d+)', "min"),
+        (r'(\w+)\s+(below|less than|at most|max|maximum)\s+(\d+)', "max"),
+        (r'(\w+)\s+between\s+(\d+)\s+and\s+(\d+)', "range"),
+        (r'(\w+)\s+(equals|equal to)\s+(\d+)', "equal"),
+        (r'(\w+)\s+(must not be empty|mandatory|required)', "not_null")
+    ]
 
-    for field, _, value in re.findall(r'(\w+)\s+(below|less than)\s+(\d+)', text):
-        rules.append({"field": field.capitalize(), "operator": "max", "value": int(value), "severity": "High"})
+    for pattern, operator in patterns:
+        matches = re.findall(pattern, text)
 
-    for field, v1, v2 in re.findall(r'(\w+)\s+between\s+(\d+)\s+and\s+(\d+)', text):
-        rules.append({"field": field.capitalize(), "operator": "range", "value": (int(v1), int(v2)), "severity": "Medium"})
+        for m in matches:
+            field = m[0]
+            col = match_column(field, columns)
 
-    for field, value in re.findall(r'(\w+)\s+equals\s+(\d+)', text):
-        rules.append({"field": field.capitalize(), "operator": "equal", "value": int(value), "severity": "Medium"})
+            if not col:
+                continue
 
-    for field in re.findall(r'(\w+)\s+(must not be empty|mandatory|should not be empty)', text):
-        rules.append({"field": field[0].capitalize(), "operator": "not_null", "value": None, "severity": "High"})
+            if operator == "range":
+                rules.append({
+                    "field": col,
+                    "operator": "range",
+                    "value": (int(m[1]), int(m[2])),
+                    "severity": "Medium"
+                })
 
-    for val in re.findall(r'within\s+(\d+)\s+hours', text):
-        rules.append({"field": "Time", "operator": "max", "value": int(val), "severity": "Critical"})
+            elif operator == "not_null":
+                rules.append({
+                    "field": col,
+                    "operator": "not_null",
+                    "value": None,
+                    "severity": "High"
+                })
+
+            else:
+                rules.append({
+                    "field": col,
+                    "operator": operator,
+                    "value": int(m[-1]),
+                    "severity": "High"
+                })
 
     return rules
 
 # ---------------------------
-# RULE ENGINE
+# RULE ENGINE (same)
 # ---------------------------
 def evaluate_rules(row, rules):
     issues = []
@@ -45,35 +79,35 @@ def evaluate_rules(row, rules):
         field = rule["field"]
         operator = rule["operator"]
         value = rule["value"]
-        severity = rule["severity"]
 
         if field not in row:
             continue
 
         if operator == "min" and row[field] < value:
-            issues.append(f"{field} < {value} ({severity})")
+            issues.append(f"{field} < {value}")
 
         elif operator == "max" and row[field] > value:
-            issues.append(f"{field} > {value} ({severity})")
+            issues.append(f"{field} > {value}")
 
         elif operator == "range":
             if not (value[0] <= row[field] <= value[1]):
-                issues.append(f"{field} not in range {value} ({severity})")
+                issues.append(f"{field} not in {value}")
 
         elif operator == "equal" and row[field] != value:
-            issues.append(f"{field} != {value} ({severity})")
+            issues.append(f"{field} != {value}")
 
         elif operator == "not_null" and pd.isna(row[field]):
-            issues.append(f"{field} is null ({severity})")
+            issues.append(f"{field} is null")
 
     return "✅ Compliant" if not issues else "❌ " + ", ".join(issues)
 
 # ---------------------------
-# READ RULE FILE (ADDED)
+# FILE READERS ✅
 # ---------------------------
-def read_rules_file(file):
+def read_rules_file(file, columns):
     if file.name.endswith(".txt"):
-        return generate_rules_from_text(file.read().decode("utf-8"))
+        text = file.read().decode("utf-8")
+        return generate_rules_from_text(text, columns)
 
     elif file.name.endswith(".csv"):
         df = pd.read_csv(file)
@@ -83,7 +117,7 @@ def read_rules_file(file):
         from docx import Document
         doc = Document(file)
         text = " ".join([p.text for p in doc.paragraphs])
-        return generate_rules_from_text(text)
+        return generate_rules_from_text(text, columns)
 
     return []
 
@@ -92,26 +126,13 @@ def read_rules_file(file):
 # ---------------------------
 st.sidebar.header("Inputs")
 
-data_file = st.sidebar.file_uploader("Upload Data", type=["csv", "xlsx"])
-rules_file = st.sidebar.file_uploader("Upload Rules File", type=["csv", "txt", "docx"])
+data_file = st.sidebar.file_uploader("Upload Data", type=["csv","xlsx"])
+rules_file = st.sidebar.file_uploader("Upload Rules", type=["csv","txt","docx"])
 
 policy_text = st.sidebar.text_area("Policy Text")
 generate = st.sidebar.button("Generate Rules")
 
-# ---------------------------
-# LOAD RULES
-# ---------------------------
 rules = []
-
-if rules_file:
-    rules = read_rules_file(rules_file)
-
-elif generate and policy_text:
-    rules = generate_rules_from_text(policy_text)
-    st.session_state["rules"] = rules
-
-elif "rules" in st.session_state:
-    rules = st.session_state["rules"]
 
 # ---------------------------
 # MAIN
@@ -122,6 +143,17 @@ if data_file:
         data = pd.read_csv(data_file)
     else:
         data = pd.read_excel(data_file, engine="openpyxl")
+
+    # ✅ RULE LOADING (IMPROVED)
+    if rules_file:
+        rules = read_rules_file(rules_file, data.columns)
+
+    elif generate and policy_text:
+        rules = generate_rules_from_text(policy_text, data.columns)
+        st.session_state["rules"] = rules
+
+    elif "rules" in st.session_state:
+        rules = st.session_state["rules"]
 
     col1, col2 = st.columns(2)
 
@@ -134,10 +166,10 @@ if data_file:
         st.write(rules if rules else "No rules")
 
     # SEARCH
-    search = st.text_input("Search Name")
+    search = st.text_input("Search")
 
     if search:
-        data = data[data["Name"].astype(str).str.contains(search, case=False, na=False)]
+        data = data[data.astype(str).apply(lambda r: r.str.contains(search, case=False, na=False)).any(axis=1)]
 
     if st.button("Run Compliance Check"):
 
@@ -152,7 +184,7 @@ if data_file:
 
             st.markdown("<br>", unsafe_allow_html=True)
             st.markdown(f"""
-            <div style="background-color:#e3a389;padding:25px;border-radius:8px;text-align:center;font-size:18px;">
+            <div style="background-color:#e3a389;padding:25px;border-radius:8px;text-align:center;">
                 <h3>Results Dashboard</h3>
                 <p>Total Records: {total}</p>
                 <p>Compliant: {compliant} ✅</p>
@@ -160,25 +192,7 @@ if data_file:
             </div>
             """, unsafe_allow_html=True)
 
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Total", total)
-            c2.metric("Compliant", compliant)
-            c3.metric("Violations", violations)
-
-            chart = pd.DataFrame({
-                "Status": ["Compliant", "Violations"],
-                "Count": [compliant, violations]
-            })
-            st.bar_chart(chart.set_index("Status"))
-
-            def highlight(row):
-                return ['background-color: #ffcccc' if "❌" in row["Result"]
-                        else 'background-color: #ccffcc'] * len(row)
-
-            st.dataframe(data.style.apply(highlight, axis=1))
-
-            csv = data.to_csv(index=False).encode('utf-8')
-            st.download_button("Download Report", csv, "output.csv")
+            st.dataframe(data)
 
 else:
     st.info("Upload data to start")
