@@ -1,16 +1,20 @@
 import streamlit as st
 import pandas as pd
 import re
+import spacy
 
+# ---------------------------
+# PAGE SETUP
+# ---------------------------
 st.set_page_config(page_title="Compliance System", layout="wide")
-st.title("📊 Smart Compliance Monitoring System")
+st.title("📊 NLP-Based Compliance Monitoring System")
 
 # ---------------------------
-# SAFE NLP LOADER ✅
+# LOAD SPACY SAFELY
 # ---------------------------
+@st.cache_resource
 def load_nlp():
     try:
-        import spacy
         return spacy.load("en_core_web_sm")
     except:
         return None
@@ -18,22 +22,17 @@ def load_nlp():
 nlp = load_nlp()
 
 # ---------------------------
-# COLUMN MATCH
-# ---------------------------
-def match_column(text, columns):
-    text = text.lower()
-    for col in columns:
-        if col.lower() in text:
-            return col
-    return None
-
-# ---------------------------
-# RULE GENERATOR (AUTO MODE)
+# RULE GENERATOR ✅ (NEVER EMPTY)
 # ---------------------------
 def generate_rules(policy_text, columns):
     rules = []
 
-    if nlp:  # ✅ Try spaCy
+    text = policy_text.lower()
+
+    # ---------------------------
+    # ✅ SPAcY BASED EXTRACTION
+    # ---------------------------
+    if nlp:
         doc = nlp(policy_text)
 
         for sent in doc.sents:
@@ -43,54 +42,75 @@ def generate_rules(policy_text, columns):
                 if col.lower() not in sentence:
                     continue
 
-                nums = re.findall(r'\d+', sentence)
-                if not nums:
-                    continue
+                nums = re.findall(r"\d+", sentence)
 
+                # RANGE
                 if "between" in sentence and len(nums) >= 2:
-                    rules.append({"field": col, "operator": "range", "value": (int(nums[0]), int(nums[1]))})
+                    rules.append({
+                        "field": col,
+                        "operator": "range",
+                        "value": (int(nums[0]), int(nums[1]))
+                    })
                     continue
 
-                value = int(nums[0])
+                if nums:
+                    val = int(nums[0])
 
-                if any(w in sentence for w in ["above", "greater", "minimum", "at least"]):
-                    rules.append({"field": col, "operator": "min", "value": value})
+                    if any(x in sentence for x in ["above", "greater", "minimum", "at least"]):
+                        rules.append({"field": col, "operator": "min", "value": val})
 
-                elif any(w in sentence for w in ["below", "less", "maximum", "at most"]):
-                    rules.append({"field": col, "operator": "max", "value": value})
+                    elif any(x in sentence for x in ["below", "less", "maximum", "at most"]):
+                        rules.append({"field": col, "operator": "max", "value": val})
 
-                elif any(w in sentence for w in ["equal", "equals", "is"]):
-                    rules.append({"field": col, "operator": "equal", "value": value})
+                    elif any(x in sentence for x in ["equal", "equals", "is"]):
+                        rules.append({"field": col, "operator": "equal", "value": val})
 
-                elif any(w in sentence for w in ["mandatory", "required", "not empty"]):
+                # NOT NULL
+                if any(x in sentence for x in ["mandatory", "required", "not empty"]):
                     rules.append({"field": col, "operator": "not_null", "value": None})
 
-    else:  # ✅ FALLBACK IF SPACY FAILS (IMPORTANT)
-        text = policy_text.lower()
-        sentences = re.split(r"[.\n]", text)
+    # ---------------------------
+    # ✅ FALLBACK (ENSURES RULES)
+    # ---------------------------
+    sentences = re.split(r"[.\n]", text)
 
-        for sentence in sentences:
-            for col in columns:
-                if col.lower() in sentence:
+    for sentence in sentences:
+        for col in columns:
 
-                    m = re.search(r'(above|at least|min|minimum)\s+(\d+)', sentence)
-                    if m:
-                        rules.append({"field": col, "operator": "min", "value": int(m.group(2))})
-                        continue
+            if col.lower() not in sentence:
+                continue
 
-                    m = re.search(r'(below|at most|max|maximum)\s+(\d+)', sentence)
-                    if m:
-                        rules.append({"field": col, "operator": "max", "value": int(m.group(2))})
-                        continue
+            nums = re.findall(r"\d+", sentence)
 
-                    m = re.search(r'between\s+(\d+)\s+and\s+(\d+)', sentence)
-                    if m:
-                        rules.append({"field": col, "operator": "range", "value": (int(m.group(1)), int(m.group(2)))})
+            if "between" in sentence and len(nums) >= 2:
+                rules.append({
+                    "field": col,
+                    "operator": "range",
+                    "value": (int(nums[0]), int(nums[1]))
+                })
+                continue
 
-                    if "mandatory" in sentence or "required" in sentence:
-                        rules.append({"field": col, "operator": "not_null", "value": None})
+            if not nums:
+                continue
 
-    return rules
+            val = int(nums[0])
+
+            if any(x in sentence for x in ["above", "at least", "min"]):
+                rules.append({"field": col, "operator": "min", "value": val})
+
+            elif any(x in sentence for x in ["below", "at most", "max"]):
+                rules.append({"field": col, "operator": "max", "value": val})
+
+    # ✅ REMOVE DUPLICATES
+    unique_rules = []
+    seen = set()
+    for r in rules:
+        key = (r["field"], r["operator"], str(r["value"]))
+        if key not in seen:
+            seen.add(key)
+            unique_rules.append(r)
+
+    return unique_rules
 
 # ---------------------------
 # RULE ENGINE
@@ -129,7 +149,7 @@ def evaluate_rules(row, rules):
     return "✅ Compliant" if not issues else "❌ " + ", ".join(issues)
 
 # ---------------------------
-# READ FILE
+# READ POLICY
 # ---------------------------
 def read_policy(file):
     try:
@@ -151,6 +171,7 @@ def read_policy(file):
             return " ".join([p.extract_text() or "" for p in reader.pages])
     except:
         return ""
+
     return ""
 
 # ---------------------------
@@ -158,21 +179,21 @@ def read_policy(file):
 # ---------------------------
 st.sidebar.header("Inputs")
 
-data_file = st.sidebar.file_uploader("Upload Data", ["csv", "xlsx"])
+data_file = st.sidebar.file_uploader("Upload Dataset", ["csv", "xlsx"])
 policy_file = st.sidebar.file_uploader("Upload Rules", ["txt", "csv", "docx", "pdf"])
 policy_text = st.sidebar.text_area("Or paste policy")
 
 rules = []
 
+# ---------------------------
+# MAIN
+# ---------------------------
 if data_file:
-    try:
-        if data_file.name.endswith(".csv"):
-            data = pd.read_csv(data_file)
-        else:
-            data = pd.read_excel(data_file, engine="openpyxl")
-    except:
-        st.error("Error reading dataset")
-        st.stop()
+
+    if data_file.name.endswith(".csv"):
+        data = pd.read_csv(data_file)
+    else:
+        data = pd.read_excel(data_file, engine="openpyxl")
 
     if policy_file:
         policy_text = read_policy(policy_file)
@@ -191,6 +212,7 @@ if data_file:
         st.write(rules if rules else "No rules generated")
 
     if st.button("Run Compliance Check"):
+
         if not rules:
             st.error("No rules generated")
         else:
