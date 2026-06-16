@@ -18,7 +18,7 @@ def match_column(sentence, columns):
     return None
 
 # ---------------------------
-# RULE GENERATOR (STABLE + SMART)
+# RULE GENERATOR
 # ---------------------------
 def generate_rules(policy_text, columns):
     rules = []
@@ -58,7 +58,6 @@ def generate_rules(policy_text, columns):
             })
             continue
 
-        # Skip if no numbers
         if not nums:
             continue
 
@@ -96,7 +95,7 @@ def generate_rules(policy_text, columns):
                 "value": value
             })
 
-    # ✅ SAFE FALLBACK (NO ERROR)
+    # SAFE FALLBACK
     if not rules and len(columns) > 0:
         rules.append({
             "field": columns[0],
@@ -168,13 +167,16 @@ def read_policy(file):
     return ""
 
 # ---------------------------
-# UI
+# SIDEBAR (UPDATED ✅)
 # ---------------------------
 st.sidebar.header("Inputs")
 
-data_file = st.sidebar.file_uploader("Upload Dataset", ["csv", "xlsx"])
-policy_file = st.sidebar.file_uploader("Upload Policy", ["txt", "csv", "docx", "pdf"])
+# ✅ Policy FIRST
+policy_file = st.sidebar.file_uploader("Upload Policy Documents", ["txt", "csv", "docx", "pdf"])
 policy_text = st.sidebar.text_area("Or paste policy")
+
+# ✅ Dataset BELOW
+data_file = st.sidebar.file_uploader("Upload Dataset", ["csv", "xlsx"])
 
 rules = []
 
